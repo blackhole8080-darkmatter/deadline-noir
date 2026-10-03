@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "description": "A first-person noir detective game where the questioning decides the killer.",
+  "license": "MIT",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

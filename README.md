@@ -83,3 +83,7 @@ synthesised.
 The split matters: the story and the rules know nothing about how the game
 looks, so the script can be rewritten without touching the drawing, and the
 rules can be tested without a browser.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE). Use it, change it, share it.
