@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DEADLINE</title>
+    <link rel="icon" href="data:," />
+    <meta name="description" content="A first-person noir detective game. One newsroom, three suspects, one night." />
+    <style>
+      :root {
+        --ink: #05060a;
+        --paper: #e9e4d6;
+        --dim: #8a90a3;
+        --faint: #5d6377;
+        --amber: #e6a34c;
+        --red: #c8433c;
+        --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+        --type: "Courier Prime", "Courier New", Courier, monospace;
+        --caps: clamp(10px, 1.05vw, 15px);
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: var(--ink);
+        color: var(--paper);
+        font-family: var(--serif);
+        overflow: hidden;
+      }
+      #stage { height: 100%; display: grid; place-items: center; }
+      /* The frame is always 16:9 and as large as the window allows. */
+      #frame {
+        position: relative;
+        width: min(100vw, calc(100vh * 16 / 9));
+        aspect-ratio: 16 / 9;
+        overflow: hidden;
+        cursor: none;
+        user-select: none;
+      }
+      canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+      button { all: unset; cursor: pointer; box-sizing: border-box; }
+      #overlay * { scrollbar-width: thin; scrollbar-color: #2a3046 transparent; }
+
+      .caps {
+        font-size: var(--caps);
+        letter-spacing: 0.32em;
+        text-transform: uppercase;
+      }
+
+      /* Each group of interface shows only in the modes it belongs to. */
+      .world, #dialogue, #choices, #overlay { opacity: 0; pointer-events: none; transition: opacity 0.3s; }
+      #frame[data-mode="world"]:not([data-moving]) .world { opacity: 1; pointer-events: auto; }
+      #frame[data-mode="lines"] #dialogue { opacity: 1; }
+      #frame[data-mode="choice"] #choices { opacity: 1; pointer-events: auto; }
+      #frame[data-overlay] #overlay { opacity: 1; pointer-events: auto; cursor: default; }
+
+      #caption { position: absolute; left: 4%; top: 6.4%; color: var(--dim); }
+      #caption b { color: var(--amber); font-weight: 400; }
+
+      .exit { position: absolute; color: var(--amber); white-space: nowrap; padding: 0.5em 0.2em; }
+      .exit:hover { color: #ffd9a0; }
+      .exit.shut { color: var(--faint); }
+      .exit[hidden] { display: none; }
+      #exit-forward { top: 6.4%; left: 50%; transform: translateX(-50%); padding-top: 0; }
+      #exit-left { top: 20%; left: 4%; }
+      #exit-right { top: 20%; right: 4%; }
+      #exit-back { bottom: 6.6%; left: 50%; transform: translateX(-50%); padding: 0 0.2em; }
+
+      #hud-left { position: absolute; left: 4%; bottom: 6.6%; color: var(--faint); }
+      #hud-right { position: absolute; right: 4%; bottom: 6.6%; color: var(--faint); display: flex; gap: 2.2em; }
+      #hud-right button:hover { color: var(--paper); }
+      #hud-right button.hot { color: var(--amber); }
+      #hud-right kbd, #overlay kbd { font-family: var(--type); letter-spacing: 0.1em; color: var(--dim); }
+
+      /* A prompt for someone who has not yet found out what the torch is for. */
+      #hint { position: absolute; left: 0; right: 0; bottom: 13%; text-align: center; color: var(--dim); pointer-events: none; animation: breathe 2.6s ease-in-out infinite; }
+      #hint:empty { display: none; }
+      @keyframes breathe { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
+      .teach { color: var(--dim); margin-bottom: 1.1em; text-align: left; padding-left: 1em; }
+      #label {
+        position: absolute;
+        transform: translate(-50%, -100%);
+        color: var(--amber);
+        white-space: nowrap;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.2s;
+        text-shadow: 0 0 12px rgba(0, 0, 0, 0.9);
+      }
+      #label.on { opacity: 1; }
+
+      /* Suspicion: three bars that always add up to 100. */
+      #meter { position: absolute; right: 4%; top: 6%; width: 21%; display: grid; gap: 0.45em; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
+      #frame[data-mode="world"] #meter, #frame[data-mode="lines"] #meter, #frame[data-mode="choice"] #meter { opacity: 1; }
+      .bar { display: grid; grid-template-columns: 8.4em 1fr 2.6em 2.2em; align-items: center; gap: 0.6em; font-family: var(--type); font-size: clamp(8px, 0.85vw, 12px); letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim); }
+      .bar i { height: 3px; background: rgba(233, 228, 214, 0.14); }
+      .bar b { display: block; height: 100%; background: var(--amber); transition: width 0.9s ease; }
+      .bar em { font-style: normal; text-align: right; color: var(--paper); }
+      .bar s { text-decoration: none; animation: delta 3s forwards; }
+      .bar.up s { color: var(--red); }
+      .bar.down s { color: #8fd0c6; }
+      @keyframes delta { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
+
+      #notices { position: absolute; right: 4%; top: 17%; display: grid; gap: 0.6em; justify-items: end; pointer-events: none; }
+      .notice {
+        font-family: var(--type);
+        font-size: clamp(10px, 1vw, 14px);
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        padding: 0.7em 1em;
+        background: rgba(5, 6, 10, 0.82);
+        border-left: 2px solid var(--amber);
+        animation: notice 4.2s forwards;
+      }
+      @keyframes notice {
+        0% { opacity: 0; transform: translateX(12px); }
+        8%, 82% { opacity: 1; transform: none; }
+        100% { opacity: 0; }
+      }
+
+      #dialogue, #choices {
+        position: absolute;
+        left: 50%;
+        bottom: 9%;
+        width: min(72%, 920px);
+        transform: translateX(-50%);
+        text-align: center;
+      }
+      #speaker { color: var(--amber); margin-bottom: 0.7em; min-height: 1.2em; }
+      #text {
+        font-size: clamp(15px, 1.9vw, 27px);
+        line-height: 1.45;
+        text-shadow: 0 2px 18px rgba(0, 0, 0, 0.95), 0 0 2px rgba(0, 0, 0, 0.9);
+        min-height: 2.9em;
+      }
+      #text.note { font-style: italic; color: #c3c7d4; }
+      /* The detective reasoning to himself: a different voice from anything spoken. */
+      #speaker.think { color: #9fb0e0; }
+      #text.think { font-family: var(--type); font-size: clamp(12px, 1.4vw, 20px); line-height: 1.6; color: #c9d4f4; }
+      /* The moment the case locks: the thought is larger, and nothing else is on screen. */
+      #text.lock { font-size: clamp(14px, 1.75vw, 25px); color: var(--paper); }
+      #frame[data-lock] #meter, #frame[data-lock] #notices { opacity: 0; }
+
+      #choices ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.25em; }
+      #choices button {
+        display: block;
+        width: 100%;
+        padding: 0.42em 1em;
+        font-size: clamp(13px, 1.5vw, 21px);
+        color: #c3c7d4;
+        border-left: 2px solid transparent;
+        text-align: left;
+      }
+      #choices button b { font-family: var(--type); font-weight: 400; color: var(--faint); margin-right: 1em; }
+      #choices button.on { color: var(--paper); background: rgba(233, 228, 214, 0.06); border-left-color: var(--amber); }
+      #choices button u {
+        display: inline-block;
+        width: 9.4em;
+        text-decoration: none;
+        font-family: var(--type);
+        font-size: 0.68em;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--amber);
+      }
+      #choices button.present u { color: #8fd0c6; }
+      #choices button.spent { color: var(--faint); }
+      #choices button.spent u { color: var(--faint); }
+      #choices .leave { display: block; margin: 1em auto 0; width: auto; color: var(--faint); font-size: var(--caps); padding: 0.2em 0.6em; border: 0; text-align: center; }
+      #choices .leave:hover { color: var(--paper); }
+
+      #overlay {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        background: rgba(3, 4, 8, 0.78);
+        text-align: center;
+      }
+      #frame[data-overlay="title"] #overlay { background: rgba(3, 4, 8, 0.35); }
+      #frame[data-overlay="ending"] #overlay { background: #030408; }
+      #overlay h1 {
+        margin: 0 0 0.25em;
+        font-weight: 400;
+        font-size: clamp(34px, 8vw, 104px);
+        letter-spacing: 0.3em;
+        text-indent: 0.3em;
+        color: var(--paper);
+      }
+      #overlay h2 { margin: 0 0 1.4em; font-weight: 400; font-size: clamp(16px, 2.2vw, 30px); letter-spacing: 0.12em; }
+      #overlay h2.bad { color: var(--red); }
+      #overlay h2.good { color: var(--amber); }
+      #overlay .sub { color: var(--dim); margin-bottom: 3.2em; }
+      #overlay .menu { display: grid; gap: 1.1em; justify-items: center; }
+      #overlay .menu button { color: var(--dim); padding: 0.2em 0.8em; border-bottom: 1px solid transparent; }
+      #overlay .menu button.on, #overlay .menu button:hover { color: var(--amber); border-bottom-color: var(--amber); }
+      #overlay .hint { color: var(--faint); margin-top: 3em; }
+      #overlay table { margin: 0 auto; border-spacing: 2.4em 0.7em; text-align: left; }
+      #overlay td:first-child { font-family: var(--type); color: var(--amber); letter-spacing: 0.12em; text-transform: uppercase; font-size: var(--caps); }
+      #overlay td { font-size: clamp(12px, 1.3vw, 18px); color: #c3c7d4; }
+      #file { width: min(90%, 1100px); max-height: 82%; display: grid; grid-template-columns: 1.5fr 1fr; gap: 3em; text-align: left; }
+      #file .col { overflow-y: auto; overflow-x: hidden; padding-right: 0.8em; max-height: 100%; }
+      #file h3 { margin: 0 0 1.2em; font-weight: 400; color: var(--dim); }
+      #file .col h3:not(:first-child) { margin-top: 2em; }
+      #file h4 { margin: 1.4em 0 0.6em; font-weight: 400; color: var(--amber); }
+      #file h4:first-of-type { margin-top: 0; }
+      .entry { padding: 0.55em 0 0.7em 0.9em; border-left: 2px solid rgba(233, 228, 214, 0.16); margin-bottom: 0.6em; }
+      .entry q { display: block; font-size: clamp(12px, 1.3vw, 18px); color: var(--paper); }
+      .entry p { margin: 0.35em 0 0; font-size: clamp(11px, 1.1vw, 15px); color: #aab1c6; }
+      .entry u { text-decoration: none; font-family: var(--type); font-size: 0.82em; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); margin-right: 0.6em; }
+      .entry .stamp { float: right; font-family: var(--type); font-size: clamp(9px, 0.9vw, 13px); letter-spacing: 0.2em; text-transform: uppercase; padding: 0.15em 0.5em; border: 1px solid currentColor; color: var(--faint); margin-left: 1em; }
+      .entry.truth { border-left-color: #8fd0c6; }
+      .entry.truth .stamp { color: #8fd0c6; }
+      .entry.lie { border-left-color: var(--red); }
+      .entry.lie .stamp { color: var(--red); }
+      #file .bars { display: grid; gap: 0.6em; }
+      #present { width: min(88%, 1040px); max-height: 84%; display: grid; grid-template-rows: auto 1fr auto; text-align: left; }
+      #present h2 { text-align: center; margin-bottom: 1em; }
+      #present .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 2.4em; overflow-y: auto; overflow-x: hidden; }
+      #present h3 { margin: 0 0 0.9em; font-weight: 400; color: var(--dim); }
+      #present .hint { text-align: center; margin-top: 1.4em; }
+      .item { display: block; width: 100%; padding: 0.55em 0.8em; margin-bottom: 0.45em; border-left: 2px solid rgba(233, 228, 214, 0.16); }
+      .item:hover { background: rgba(233, 228, 214, 0.07); border-left-color: var(--amber); }
+      .item b { display: block; font-weight: 400; font-family: var(--type); font-size: var(--caps); letter-spacing: 0.14em; text-transform: uppercase; color: #8fd0c6; }
+      .item span { display: block; margin-top: 0.2em; font-size: clamp(11px, 1.2vw, 17px); color: #c3c7d4; }
+      #file dl { margin: 0; display: grid; gap: 1em; }
+      #file dt { font-family: var(--type); color: #8fd0c6; letter-spacing: 0.14em; text-transform: uppercase; font-size: var(--caps); }
+      #file dd { margin: 0.25em 0 0; font-size: clamp(12px, 1.35vw, 19px); color: #c3c7d4; }
+      #file .who { display: flex; justify-content: space-between; gap: 1em; padding: 0.6em 0; border-bottom: 1px solid rgba(233, 228, 214, 0.1); }
+      #file .who span { font-family: var(--type); letter-spacing: 0.12em; text-transform: uppercase; font-size: var(--caps); color: var(--faint); }
+      #file .who span.broke { color: #8fd0c6; }
+      #file .empty { color: var(--faint); font-style: italic; }
+      #ending { width: min(70%, 820px); }
+      #ending p { font-size: clamp(14px, 1.7vw, 24px); line-height: 1.6; min-height: 8em; margin: 0; }
+      #ending ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.7em; min-height: 8em; }
+      #ending li { font-family: var(--type); letter-spacing: 0.12em; text-transform: uppercase; font-size: var(--caps); color: #c3c7d4; }
+      #ending.recap { width: min(86%, 980px); }
+      #ending.recap h2 { margin-bottom: 1em; }
+      #ending.recap ul { min-height: 0; margin-bottom: 2em; }
+      .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.2em; margin-bottom: 2em; }
+      .card { padding: 1.2em 1em 1.3em; border: 1px solid rgba(233, 228, 214, 0.14); display: grid; gap: 0.5em; }
+      .card span { color: var(--faint); font-size: clamp(9px, 0.9vw, 13px); }
+      .card b { font-weight: 400; font-size: clamp(16px, 2vw, 28px); color: #aab1c6; }
+      .card em { font-style: italic; font-size: clamp(11px, 1.15vw, 16px); color: var(--faint); }
+      .card.was { border-color: var(--amber); background: rgba(230, 163, 76, 0.07); }
+      .card.was span { color: var(--amber); }
+      .card.was b { color: var(--paper); }
+      .again { color: var(--amber); padding: 0.5em 1.2em; border: 1px solid var(--amber); }
+      .again:hover { background: rgba(230, 163, 76, 0.14); }
+    </style>
+  </head>
+  <body>
+    <div id="stage">
+      <div id="frame" data-mode="title">
+        <canvas id="screen"></canvas>
+
+        <div id="caption" class="caps world"></div>
+        <button id="exit-forward" class="exit caps world" data-dir="forward"></button>
+        <button id="exit-left" class="exit caps world" data-dir="left"></button>
+        <button id="exit-right" class="exit caps world" data-dir="right"></button>
+        <button id="exit-back" class="exit caps world" data-dir="back"></button>
+        <div id="hud-left" class="caps world"></div>
+        <div id="hud-right" class="caps world"></div>
+        <div id="hint" class="caps world"></div>
+        <div id="label" class="caps"></div>
+        <div id="meter"></div>
+        <div id="notices"></div>
+
+        <div id="dialogue">
+          <div id="speaker" class="caps"></div>
+          <div id="text"></div>
+        </div>
+        <div id="choices"></div>
+
+        <div id="overlay"></div>
+      </div>
+    </div>
+    <script type="module" src="/src/noir-main.ts"></script>
+  </body>
+</html>
